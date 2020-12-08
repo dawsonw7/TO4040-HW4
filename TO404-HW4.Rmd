@@ -1,0 +1,168 @@
+---
+title: "TO404-HW4"
+author: "Dawson Wang"
+date: "December 2, 2020"
+output: 
+  html_document:
+      number_sections: true
+      toc: true
+      toc_float:
+        toc_collapsed: true
+      toc_depth: 3
+      theme: lumen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Initialize
+
+## Packages Used
+```{r }
+library(lubridate)
+library(gender)
+library(dplyr)
+library(ggplot2)
+library(leaflet)
+```
+
+## Read and Clean Data
+```{r}
+abnyc <- read.csv("AB_NYC_2019.csv", stringsAsFactors = TRUE)
+abnyc$id <- as.factor(abnyc$id)
+abnyc$name <- as.character(abnyc$name)
+abnyc$host_name <- as.character(abnyc$host_name)
+abnyc$host_id <- as.factor(abnyc$host_id)
+abnyc$last_review <- ymd(abnyc$last_review)
+gen <- as.vector(gender(abnyc$host_name))
+gen$proportion_male <- gen$proportion_female <- gen$year_min <- gen$year_max <- NULL
+gen <- unique(gen)
+names(gen)[names(gen) == "name"] <- "host_name"
+data <- merge(x = abnyc, y = gen, by.x = "host_name", by.y = "host_name", all.x = TRUE)
+data$gender <- as.factor(data$gender)
+data$gender <- as.factor(ifelse(is.na(data$gender), "unknown", ifelse(data$gender == "male", "male", "female")))
+data$nameLength <- nchar(data$name)
+data$keywords <- as.factor(ifelse(grepl("Luxur", data$name), "Luxury", ifelse(grepl("eclectic", data$name), "Eclectic", ifelse(grepl("rare", data$name), "Rare", ifelse(grepl("renovated", data$name), "Renovated", ifelse(grepl("peaceful", data$name), "Peaceful", ifelse(grepl("contemporary", data$name), "Contemporary", ifelse(grepl("resort", data$name), "Resort", NA))))))))
+
+```
+
+# Calculating Metrics
+
+## Average Rental Rate by Host's Gender
+```{r}
+data[data$price < 300,] %>%
+  group_by(gender) %>%
+  ggplot(aes(x = gender, y = price)) + geom_boxplot(outlier.shape = NA) + labs(x = "Host's Gender", y = "Rental Rate")
+tapply(data$price, data$gender, mean)
+```
+
+There does not seem to be a significant difference between rental prices offered by male or female hosts.
+
+## Rental Rates by Neighborhood
+```{r}
+data %>%
+  group_by(neighbourhood) %>%
+  summarise(
+    avgPrice = mean(price, na.rm = TRUE)
+  ) %>%
+  arrange(desc(avgPrice)) %>%
+  slice(1:5) %>%
+  ggplot(aes(x = reorder(neighbourhood, -avgPrice), y = avgPrice)) + geom_col() + labs(x = "Neighborhood", y = "Average Rental Rate")
+```
+
+Fort Wadsworth and Woodrow are in Staten Island; Tribeca is in Manhattan; Sea Gate is in Brooklyn; Riverdale is in Bronx. Interestingly enough, the top two most expensive neighborhoods lie in the moderately-priced neighborhood group of Staten Island (according to chart below)
+
+## Rental Rates by Neighborhood Group
+```{r}
+group_by(data, neighbourhood_group) %>%
+  summarise(
+    avgPrice = mean(price, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = reorder(neighbourhood_group, -avgPrice), y = avgPrice)) + geom_col() + labs(x = "Neighborhood Group", y = "Average Rental Rate")
+```
+
+Manhattan has the most expensive AirBnB rental rates, as expected.
+
+## Effects of Reviews
+
+### Reviews per Month
+```{r}
+data %>%
+  group_by(reviews_per_month) %>%
+  summarise(
+    avgPrice = mean(price, na.rm = TRUE)
+  ) %>%
+    ggplot(aes(x = reviews_per_month, y = avgPrice)) + geom_smooth() + labs(x = "Number of Reviews per Month", y = "Average Rental Rate")
+```
+
+Due to the wide variation in rental rates as reviews per month increases, this graph may not be very meaningful. However, it's still interesting to see a clear inflection point at all. Customer expectations for housing quality in different neighborhoods/neighborhood groups could be a confounding variable, since tenants presumably post reviews only when their experience deviates from their expectations; this could be causing the pattern we see. 
+
+### Average Number of Reviews
+```{r}
+data %>%
+  group_by(number_of_reviews) %>%
+  summarise(
+    avgPrice = mean(price, na.rm = TRUE)
+  )%>%
+  ggplot(aes(x = number_of_reviews, y = avgPrice)) + geom_smooth() + labs(x = "Average Number of Reviews", y = "Average Rental Rate")
+```
+
+Average rental rate decreases as the number of reviews increases. This trend is expected since cheaper listings are accessible to more people, leading to more reviews being written.
+
+## Effects of Listing Descriptions
+
+### Length of Listing Name
+```{r}
+data %>%
+  group_by(nameLength) %>%
+  summarise(
+    avgPrice = mean(price, na.rm = TRUE),
+  ) %>%
+  ggplot(aes(x = nameLength, y = avgPrice)) + geom_smooth() + labs(x = "Length of Listing Name (Character Count)", y = "Average Rental Rate")
+```
+
+As character count increases, rental price looks to hit a local maximum at around 65-70 characters. This could be due to customers having an easier time browsing shorter names (65-70 characters long), causing slightly higher demand due to higher probability of getting shortlisted by the customer, justifying higher rates offered by the host. As names get longer than ~125 characters, however, rates also begin to increase once again - potentially due to higher click rates from attention-catching name lengths leading to the same aforementioned outcome.
+
+### Keywords "Luxury" or "Luxurious"; Eclectic; Rare; Glamorous; Renovated; Secluded; Contemporary; Peaceful; Resort
+```{r}
+na.omit(data) %>%
+  group_by(keywords) %>%
+  summarise(
+    avgPrice = price
+  ) %>%
+  ggplot(aes(x = keywords, y = avgPrice)) + geom_boxplot(outlier.shape = NA) + labs(x = "Keywords", y = "Average Rental Rate") + ylim(0,500)
+```
+
+Listing names that include luxury/luxurious have higher rental rates than listings with other keywords in this analysis.
+
+## Other Metrics
+
+### Minimum Number of Nights to Neighborhood Groups
+```{r}
+group_by(data, neighbourhood_group) %>%
+  summarise(
+    minNights = mean(minimum_nights, na.rm = TRUE)
+  ) %>%
+  ggplot(aes(x = neighbourhood_group, y = minNights)) + geom_col() + labs(x = "Neighborhood Group", y = "Minimum Stay Length (# of Nights)")
+```
+
+### Number of Reviews by Neighborhood Group
+```{r}
+ggplot(data, aes(x = neighbourhood_group , y = number_of_reviews)) + geom_col() + labs(x = "Neighborhood Group", y = "Number of Reviews")
+```
+
+Despite being the most expensive place to stay, Manhattan looks to be the most popular place for people to stay. 
+
+# Map of Manhattan
+
+## Top 100 Rentals by Price
+```{r}
+data100 <- head(data[order(data$price, decreasing = TRUE), ], 100)
+leaflet(data100) %>%
+  addTiles() %>%
+  addMarkers( popup = paste("ID:", data100$id, "<br>", "Price: $", data100$price)) %>%
+  setView(-73.96,40.75, zoom = 9)
+```
+
+A large majority of the 100 most expensive rentals are in Manhattan, with many also located in central Brooklyn.
